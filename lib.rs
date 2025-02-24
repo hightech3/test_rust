@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
+use pyth_sdk_solana::{Price, load_price_feed_from_account_info}; // Add these imports to fetch price feeds from Pyth
 
 declare_id!("CFSwwcAPi9K5E7R3JAi5uv1VkToHFFFqerxyxXvz4jR2");
 
@@ -8,25 +9,26 @@ pub mod sol_to_token_exchange {
     use super::*;
 
     pub fn exchange(ctx: Context<Exchange>, amount_sol: u64) -> Result<()> {
-        let price_rate_sol_usdt: f64 = 0.0065;
-        let price_rate_token1_usdt: f64 = 12.17;
+        // Fetch current price rates from the Pyth oracle
+        let price_rate_sol_usdt = get_price_from_oracle(&ctx.accounts.sol_usdt_feed)?;
+        let price_rate_random_token_usdt = get_price_from_oracle(&ctx.accounts.random_token_usdt_feed)?;
 
-        let amount_usdt = (amount_sol as f64) / price_rate_sol_usdt;
+        let amount_usdt = (amount_sol as f64) * price_rate_sol_usdt;
 
-        // Convert USDT to TOKEN1
-        let amount_token1 = amount_usdt * price_rate_token1_usdt;
-        let amount_token1_u64 = amount_token1 as u64; // Convert to integer
+        // Convert USDT to RANDOM_TOKEN
+        let amount_random_token = amount_usdt / price_rate_random_token_usdt;
+        let amount_random_token_u64 = amount_random_token as u64;
 
-        // Transfer TOKEN1 to the user
+        // Transfer RANDOM_TOKEN to the user
         let cpi_accounts = Transfer {
-            from: ctx.accounts.token1_vault.to_account_info(),
-            to: ctx.accounts.user_token1_account.to_account_info(),
+            from: ctx.accounts.token_vault.to_account_info(),
+            to: ctx.accounts.user_token_account.to_account_info(),
             authority: ctx.accounts.exchange_pda.to_account_info(),
         };
 
         let cpi_program = ctx.accounts.token_program.to_account_info();
         let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-        token::transfer(cpi_ctx, amount_token1_u64)?;
+        token::transfer(cpi_ctx, amount_random_token_u64)?;
 
         Ok(())
     }
@@ -195,6 +197,17 @@ pub mod sol_to_token_exchange {
     }
 }
 
+fn get_price_from_oracle(price_feed_account: &AccountInfo) -> Result<f64> {
+    // Load the price feed using load_price_feed_from_account_info
+    let price_feed = load_price_feed_from_account_info(price_feed_account).unwrap();
+    let current_timestamp = Clock::get()?.unix_timestamp;
+    const STALENESS_THRESHOLD : u64 = 60; // staleness threshold in seconds
+
+    let current_price: Price = price_feed.get_price_no_older_than(current_timestamp, STALENESS_THRESHOLD).unwrap();
+    // Convert price to normal scale
+    Ok(current_price.price as f64 / 1_000_000_000.0) // Adjust based on your price feed scale
+}
+
 #[derive(Accounts)]
 pub struct Exchange<'info> {
     #[account(mut)]
@@ -208,14 +221,18 @@ pub struct Exchange<'info> {
         token::mint = token1_mint,
         token::authority = exchange_pda
     )]
-    pub token1_vault: Account<'info, TokenAccount>,
+    pub token_vault: Account<'info, TokenAccount>,
 
     #[account(mut)]
-    pub user_token1_account: Account<'info, TokenAccount>,
+    pub user_token_account: Account<'info, TokenAccount>,
 
     pub token1_mint: Account<'info, Mint>,
 
     pub token_program: Program<'info, Token>,
+
+    // Accounts for price feeds
+    pub sol_usdt_feed: AccountInfo<'info>,  // Account for SOL/USDT price feed
+    pub random_token_usdt_feed: AccountInfo<'info>,  // Account for RANDOM_TOKEN/USDT price feed
 }
 
 #[derive(Accounts)]
@@ -254,4 +271,8 @@ pub struct PoolList {
 pub enum ErrorCode {
     #[msg("Distribution error: Total does not match the ticket price")]
     DistributionError,
+    #[msg("Failed to fetch price from Oracle")]
+    OracleFetchError,
+    #[msg("Invalid price data from Pyth")]
+    InvalidPriceData,
 }
