@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 use pyth_sdk_solana::{Price, load_price_feed_from_account_info}; // Add these imports to fetch price feeds from Pyth
 
-declare_id!("CFSwwcAPi9K5E7R3JAi5uv1VkToHFFFqerxyxXvz4jR2");
+declare_id!("BbmFSpY4LpH8Ci3ubNchwNMCE2NDQquiuA18mpaxeZC");
 
 #[program]
 pub mod sol_to_token_exchange {
